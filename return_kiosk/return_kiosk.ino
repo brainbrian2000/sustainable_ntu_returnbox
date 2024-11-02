@@ -1,11 +1,13 @@
-#include "WiFi.h"
+// #include "WiFi.h"
 #include "HardwareSerial.h"
 #include <ArduinoWebsockets.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
 #include <ESP32Servo.h>
-
+#include "Wifi_connect.cpp"
+#define MACHINE_ID "1"
+WiFi_connection wifi;
 //WIFI and websockets setup
 using namespace websockets;
 WebsocketsClient webSocket;
@@ -16,7 +18,8 @@ const char* password = "";
 #define RXD2 16 
 #define TXD2 17  
 HardwareSerial MySerial(1);  
-
+#define FlatPos 175
+#define SkewPos 135
 //LCD display setup
 LiquidCrystal_I2C lcd(0x27, 20, 4); 
 
@@ -28,8 +31,11 @@ Servo myservo;
 #define yesSwitchPin 12 
 #define noSwitchPin 13 
 
+String previous_boxId = "";
 void sendToServer(String messageType, String boxId, String userId) {
-  String messageToSend = "{\"machineId\": \"789\" , \"messageType\": \"";
+  String messageToSend = "{\"machineId\": \"";
+  messageToSend +=MACHINE_ID; 
+  messageToSend +="\" , \"messageType\": \"";
   messageToSend += messageType;
   messageToSend += "\", \"boxId\": \"";
   messageToSend += boxId;
@@ -60,6 +66,7 @@ void returnToInitialScreen() {
 }
 
 void onMessageCallback(WebsocketsMessage message) {
+  previous_boxId = "";
   DynamicJsonDocument doc(1024);
   const char* boxId;
   const char* userId;
@@ -111,9 +118,9 @@ void onMessageCallback(WebsocketsMessage message) {
     if (status == 1) {
       Serial.println("Box returned");
       displayMessage("Box returned");
-      myservo.write(60); 
-      delay(1000); 
-      myservo.write(80);
+      myservo.write(SkewPos); 
+      delay(3000); 
+      myservo.write(FlatPos);
       delay(1000); 
       returnToInitialScreen();
     } else {
@@ -133,17 +140,20 @@ void setup() {
   displayMessage("Connecting...");
 
   //Wifi
-  WiFi.begin(ssid, password);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.println("Connecting to WiFi..");
-  }
-  Serial.println("Connected to the WiFi network");
+  // WiFi.begin(ssid, password);
+  // while (WiFi.status() != WL_CONNECTED) {
+  //   delay(500);
+  //   Serial.println("Connecting to WiFi..");
+  // }
+  // Serial.println("Connected to the WiFi network");
+  wifi.changePEAP("RiceballFan_peap", "brainbrian2000", "brainbrian2000");
+  wifi.turn_on_WiFi();
+  wifi.turn_on_WiFi(2);
   lcd.clear();
 
   // Print local IP address
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP()); 
+  // Serial.println("IP address: ");
+  // Serial.println(WiFi.localIP()); 
 
   // connect to WebSocket server
   webSocket.connect("ws://51.20.189.251:8000");
@@ -165,13 +175,12 @@ void setup() {
   
   myservo.setPeriodHertz(50);   
   myservo.attach(servoPin, 500, 2500);
-  myservo.write(80);
+  myservo.write(FlatPos);
 
   // Limit switch
   pinMode(yesSwitchPin, INPUT_PULLUP); 
   pinMode(noSwitchPin, INPUT_PULLUP); 
 }
-
 void loop() {
   webSocket.poll();
   if (MySerial.available()) {  // If data is available to read,
@@ -180,8 +189,13 @@ void loop() {
     {
       String boxId = MySerial.readString();  
       Serial.println(boxId);  
-      if (boxId != ""){
-        sendToServer("query", boxId, " ");
+      if (boxId.equals(previous_boxId) == false) {
+        if (boxId != ""){
+          previous_boxId = boxId;
+          sendToServer("query", boxId, " ");
+        }
+      }else{
+        Serial.println("Same boxId");
       }
     }
   }

@@ -1,7 +1,7 @@
 #ifndef _WIFI_CONNECT_CPP
 #define _WIFI_CONNECT_CPP
     #if 1
-
+        // #include "ca_pem.h"
         #include <esp_wifi.h>
         #include <esp_err.h>
         #include <esp_eap_client.h>
@@ -16,19 +16,22 @@
         #define WIFI_CONNECTED_BIT BIT0
         #define WIFI_FAIL_BIT      BIT1
         #define DEFAULT_SCAN_LIST_SIZE 30
-        #define EXAMPLE_ESP_MAXIMUM_RETRY 5
+        #define EXAMPLE_ESP_MAXIMUM_RETRY 15
         #define EXAMPLE_EAP_METHOD CONFIG_EXAMPLE_EAP_METHOD_PEAP
         #define CONFIG_ESP_WIFI_AUTH_WPA2_PSK 1
         #define CONFIG_EXAMPLE_EAP_METHOD_PEAP
+        static bool SetForceWiFiOff = false;
+        static bool auto_close_wifi = false;
+        // #define SERVER_CERT_VALIDATION_ENABLED
         static int s_retry_num = 0;
         static bool STATE_initial;
         // static esp_netif_t *sta_netif;
         static EventGroupHandle_t wifi_event_group;
         class WiFi_connection {
             private:
-                char peap_ssid_wpa2[32] = "RiceballFan_peap";          // 替換為您的 PEAP SSID
-                char peap_username_wpa2[64] = "brainbrian2000";   // 替換為您的 PEAP 用戶名
-                char peap_password_wpa2[64] = "brainbrian2000";   // 替換為您的 PEAP 密碼
+                char peap_ssid_wpa2[32] = "eduroam";          // 替換為您的 PEAP SSID
+                char peap_username_wpa2[64] = "r13247001@eduroam.ntu.edu.tw";   // 替換為您的 PEAP 用戶名
+                char peap_password_wpa2[64] = "RiceballFan2000";   // 替換為您的 PEAP 密碼
 
                 char ssid_wpa2[32] = "Riceball_Fan";               // 替換為您的 WPA2 SSID
                 char password_wpa2[64] = "brainbrian2000";        // 替換為您的 WPA2 密碼
@@ -118,19 +121,33 @@
                 #elif CONFIG_ESP_WIFI_AUTH_WAPI_PSK
                     #define ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD WIFI_AUTH_WAPI_PSK
                 #endif
+                esp_event_handler_instance_t instance_any_id;
+                esp_event_handler_instance_t instance_got_ip;
                 bool connect_wpa2() {
+                    esp_err_t ret = esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance_any_id);
+                    if (ret == ESP_OK) {
+                        Serial.println("WiFi event handler unregistered successfully.");
+                    } else {
+                        Serial.printf("Failed to unregister WiFi event handler: %s\n", esp_err_to_name(ret));
+                    }
+                    ret = esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, instance_got_ip);
+                    if (ret == ESP_OK) {
+                        Serial.println("IP event handler unregistered successfully.");
+                    } else {
+                        Serial.printf("Failed to unregister IP event handler: %s\n", esp_err_to_name(ret));
+                    }
+                    Serial.println("wifi init-WPA2");
                     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
                     esp_wifi_init(&cfg);
 
                     // 註冊 Wi-Fi 事件處理器
-                    esp_event_handler_instance_t instance_any_id;
-                    esp_event_handler_instance_t instance_got_ip;
                     esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &WiFi_event_handler, NULL, &instance_any_id);
                     esp_event_handler_instance_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &WiFi_event_handler, NULL, &instance_got_ip);
 
                     wifi_config_t wifi_config = {};
                     strcpy((char *)wifi_config.sta.ssid, ssid_wpa2);
                     strcpy((char *)wifi_config.sta.password, password_wpa2);
+                    // strcpy((char *)wifi_config.sta.)
                     // strcpy((char *)wifi_config.sta.sae_h2e_identifier, EXAMPLE_H2E_IDENTIFIER);
                     wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
@@ -155,6 +172,7 @@
                     if (bits & WIFI_CONNECTED_BIT) {
                         // Serial.printf("connected to ap SSID:%s password:%s\n",
                         //          EXAMPLE_ESP_WIFI_SSID, EXAMPLE_ESP_WIFI_PASS);
+                        obtain_time();
                         Serial.println("connected to ap");
                     } else if (bits & WIFI_FAIL_BIT) {
                         // Serial.printf("Failed to connect to SSID:%s, password:%s\n",
@@ -166,62 +184,122 @@
                     }
                     return true;
                 }
+                uint8_t best_bssid[6];
+                bool find_strongest_bssid(const char* target_ssid, uint8_t* best_bssid) {
+                    // uint16_t number = DEFAULT_SCAN_LIST_SIZE;
+                    // wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE];
+                    // uint16_t ap_count = 0;
+                    // memset(ap_info, 0, sizeof(ap_info));
+                    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+                    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
+                    uint16_t number = DEFAULT_SCAN_LIST_SIZE;
+                    wifi_ap_record_t ap_info[DEFAULT_SCAN_LIST_SIZE];
+                    uint16_t ap_count = 0;
+                    memset(ap_info, 0, sizeof(ap_info));
+                    Serial.println("Starting WiFi scan...");
+
+                    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+                    ESP_ERROR_CHECK(esp_wifi_start());
+
+                    ESP_ERROR_CHECK(esp_wifi_scan_start(NULL, true));
+                    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+                    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
+
+
+                    int best_rssi = -100;  // 初始值為非常弱的信號
+                    bool found = false;
+
+                    for (int i = 0; i < ap_count; i++) {
+                        if (strcmp((char *)ap_info[i].ssid, target_ssid) == 0) {
+                            if (ap_info[i].rssi > best_rssi) {
+                                best_rssi = ap_info[i].rssi;
+                                memcpy(best_bssid, ap_info[i].bssid, 6);
+                                found = true;
+                            }
+                        }
+                    }
+                    return found;
+                }
                 bool connect_peap() {
+                    esp_err_t ret = esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID, instance_any_id);
+                    if (ret == ESP_OK) {
+                        Serial.println("WiFi event handler unregistered successfully.");
+                    } else {
+                        Serial.printf("Failed to unregister WiFi event handler: %s\n", esp_err_to_name(ret));
+                    }
+                    ret = esp_event_handler_instance_unregister(IP_EVENT, IP_EVENT_STA_GOT_IP, instance_got_ip);
+                    if (ret == ESP_OK) {
+                        Serial.println("IP event handler unregistered successfully.");
+                    } else {
+                        Serial.printf("Failed to unregister IP event handler: %s\n", esp_err_to_name(ret));
+                    }
+
+                    // uint8_t best_bssid[6];
+                    // if (!find_strongest_bssid(peap_ssid_wpa2, best_bssid)) {
+                    //     Serial.println("No AP with matching SSID found.");
+                    //     return false;
+                    // }
+
                     #ifdef SERVER_CERT_VALIDATION_ENABLED
-                        unsigned int ca_pem_bytes = ca_pem_end - ca_pem_start;
+                        // extern const uint8_t ca_pem_start[] asm("_binary_ca_pem_start");
+                        // extern const uint8_t ca_pem_end[] asm("_binary_ca_pem_end");
+                        // unsigned int ca_pem_bytes = ca_pem_end - ca_pem_start;
                     #endif /* SERVER_CERT_VALIDATION_ENABLED */
 
                     #ifdef CONFIG_EXAMPLE_EAP_METHOD_TLS
-                        unsigned int client_crt_bytes = client_crt_end - client_crt_start;
-                        unsigned int client_key_bytes = client_key_end - client_key_start;
+                        // unsigned int client_crt_bytes = client_crt_end - client_crt_start;
+                        // unsigned int client_key_bytes = client_key_end - client_key_start;
                     #endif /* CONFIG_EXAMPLE_EAP_METHOD_TLS */
-                        Serial.println("wifi init");
+                        Serial.println("wifi init-PEAP");
                         wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
                         ESP_ERROR_CHECK(esp_wifi_init(&cfg));
-                        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &WiFi_event_handler, NULL));
-                        ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &WiFi_event_handler, NULL));
+                        ESP_ERROR_CHECK(esp_event_handler_register(WIFI_EVENT, ESP_EVENT_ANY_ID, &WiFi_event_handler, instance_any_id));
+                        ESP_ERROR_CHECK(esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP, &WiFi_event_handler, instance_got_ip));
                         ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
+                        // ESP_ERROR_CHECK(esp_wifi_sta_wpa2_ent_set_phase2_method(ESP_PEAP_PHASE2_MSCHAPV2));
+
                         wifi_config_t wifi_config = {};
                         strcpy((char * )wifi_config.sta.ssid, (const char *)peap_ssid_wpa2);
-                        //  = {
-                        //     .sta = {
-                        //         .ssid = peap_ssid_wpa2,
-                        //         #if defined (CONFIG_EXAMPLE_WPA3_192BIT_ENTERPRISE) || defined (CONFIG_EXAMPLE_WPA3_ENTERPRISE)
-                        //             .pmf_cfg = {
-                        //                 .required = true
-                        //             },
-                        //         #endif
-                        //     },
-                        // };
+                        memcpy(wifi_config.sta.bssid, best_bssid, 6);
+                        wifi_config.sta.bssid_set = 1;
+                        wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_ENTERPRISE;
+
                         ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA) );
                         ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config) );
-                        ESP_ERROR_CHECK(esp_eap_client_set_identity((uint8_t *)peap_ssid_wpa2, strlen(peap_ssid_wpa2)) );
-                        Serial.println("esp_eap_client_set_identity");
+                        // ESP_ERROR_CHECK(esp_eap_client_set_identity((uint8_t *)peap_ssid_wpa2, strlen(peap_ssid_wpa2)) );
                     #ifdef SERVER_CERT_VALIDATION_ENABLED
-                        ESP_ERROR_CHECK(esp_eap_client_set_ca_cert(ca_pem_start, ca_pem_bytes) );
+                        // ESP_ERROR_CHECK(esp_eap_client_set_ca_cert(ca_pem, ca_pem_len) );
                     #endif /* SERVER_CERT_VALIDATION_ENABLED */
 
                     #ifdef CONFIG_EXAMPLE_EAP_METHOD_TLS
-                        ESP_ERROR_CHECK(esp_eap_client_set_certificate_and_key(client_crt_start, client_crt_bytes,
-                                                        client_key_start, client_key_bytes, NULL, 0) );
+                        // ESP_ERROR_CHECK(esp_eap_client_set_certificate_and_key(client_crt_start, client_crt_bytes,
+                        //                                 client_key_start, client_key_bytes, NULL, 0) );
                     #endif /* CONFIG_EXAMPLE_EAP_METHOD_TLS */
 
                     #if defined (CONFIG_EXAMPLE_EAP_METHOD_PEAP) || defined (CONFIG_EXAMPLE_EAP_METHOD_TTLS)
+                        ESP_ERROR_CHECK(esp_eap_client_set_identity((uint8_t *)peap_username_wpa2, strlen(peap_username_wpa2)) );
+                        Serial.printf("esp_eap_client_set_identity %s",peap_username_wpa2);
                         ESP_ERROR_CHECK(esp_eap_client_set_username((uint8_t *)peap_username_wpa2, strlen(peap_username_wpa2)) );
+                        // ESP_ERROR_CHECK(esp_eap)
+                        Serial.printf(", password : %s\n",peap_password_wpa2);
                         ESP_ERROR_CHECK(esp_eap_client_set_password((uint8_t *)peap_password_wpa2, strlen(peap_password_wpa2)) );
+                        ESP_ERROR_CHECK(esp_eap_client_set_disable_time_check(true));
+                        // ESP_ERROR_CHECK(esp_eap_client_set_new_password((uint8_t *)peap_password_wpa2, strlen(peap_password_wpa2)) );
+                        // ESP_ERROR_CHECK(esp_eap_client_set_identity((uint8_t *)peap_ssid_wpa2, strlen(peap_ssid_wpa2)) );
+                        // ESP_ERROR_CHECK(esp_eap_client_set)
                     #endif /* CONFIG_EXAMPLE_EAP_METHOD_PEAP || CONFIG_EXAMPLE_EAP_METHOD_TTLS */
 
                     #if defined CONFIG_EXAMPLE_EAP_METHOD_TTLS
-                        ESP_ERROR_CHECK(esp_eap_client_set_ttls_phase2_method(TTLS_PHASE2_METHOD) );
+                        // ESP_ERROR_CHECK(esp_eap_client_set_ttls_phase2_method(TTLS_PHASE2_METHOD) );
                     #endif /* CONFIG_EXAMPLE_EAP_METHOD_TTLS */
 
                     #if defined (CONFIG_EXAMPLE_WPA3_192BIT_ENTERPRISE)
-                        ESP_LOGI(TAG, "Enabling 192 bit certification");
-                        ESP_ERROR_CHECK(esp_eap_client_set_suiteb_192bit_certification(true));
+                        // ESP_LOGI(TAG, "Enabling 192 bit certification");
+                        // ESP_ERROR_CHECK(esp_eap_client_set_suiteb_192bit_certification(true));
                     #endif
                     #ifdef CONFIG_EXAMPLE_USE_DEFAULT_CERT_BUNDLE
-                        ESP_ERROR_CHECK(esp_eap_client_use_default_cert_bundle(true));
+                        // ESP_ERROR_CHECK(esp_eap_client_use_default_cert_bundle(true));
                     #endif
                     ESP_ERROR_CHECK(esp_wifi_sta_enterprise_enable());
                     ESP_ERROR_CHECK(esp_wifi_start());
@@ -249,8 +327,6 @@
                     }
                     return true;
                 }
-
-
                 void scanAP() {
                     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
                     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
@@ -301,7 +377,7 @@
                     memset(ap_info, 0, sizeof(ap_info));
                     Serial.println("Starting WiFi scan...");
 
-                    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+                    // ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
                     ESP_ERROR_CHECK(esp_wifi_start());
 
                     // 開始掃描，使用默認的掃描設置
@@ -320,7 +396,20 @@
                             Serial.printf("SSID: %18s ", ap_info[i].ssid);
                             Serial.printf("RSSI: %4d ", ap_info[i].rssi);
                             print_auth_mode(ap_info[i].authmode);
+                            int best_rssi = -100;  // 初始值為非常弱的信號
+                            bool found = false;
+
+                            for (int i = 0; i < ap_count; i++) {
+                                if (strcmp((char *)ap_info[i].ssid, peap_ssid_wpa2) == 0) {
+                                    if (ap_info[i].rssi > best_rssi) {
+                                        best_rssi = ap_info[i].rssi;
+                                        memcpy(best_bssid, ap_info[i].bssid, 6);
+                                        found = true;
+                                    }
+                                }
+                            }
                             ESP_ERROR_CHECK(esp_wifi_stop());
+                            // return found;
                             return true;
                         }
                     }
@@ -333,17 +422,25 @@
             public:
                 static void WiFi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data){
                         if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
-                            esp_wifi_connect();
+                            if(!SetForceWiFiOff){
+                                esp_wifi_connect();
+                            }
                             Serial.println("Connecting to the AP");
                         } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
                             if (s_retry_num < EXAMPLE_ESP_MAXIMUM_RETRY) {
-                                esp_wifi_connect();
+                                if(!SetForceWiFiOff){
+                                    esp_wifi_connect();
+                                }
                                 s_retry_num++;
                                 Serial.println("retry to connect to the AP");
+                                wifi_event_sta_disconnected_t* event = (wifi_event_sta_disconnected_t*) event_data;
+                                Serial.printf("Disconnected from AP, reason: %d\n", event->reason);
                             } else {
                                 xEventGroupClearBits(wifi_event_group, WIFI_CONNECTED_BIT);
                                 xEventGroupSetBits(wifi_event_group, WIFI_FAIL_BIT);
-                                esp_wifi_stop();
+                                if(SetForceWiFiOff | auto_close_wifi){
+                                  esp_wifi_stop();
+                                }
                             }
                             Serial.println("connect to the AP fail");
                         } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
@@ -368,6 +465,7 @@
                 void changePEAP(const char* ssid, const char* userid, const char* password) {
                     strncpy(peap_ssid_wpa2, ssid, sizeof(peap_ssid_wpa2) - 1);
                     strncpy(peap_username_wpa2, userid, sizeof(peap_username_wpa2) - 1);
+                    // strncpy(peap_)
                     strncpy(peap_password_wpa2, password, sizeof(peap_password_wpa2) - 1);
                 }
                 /**
@@ -375,6 +473,15 @@
                  * @param connection_type 0 for only scan, 1 for simple WPA2, 2 for peap
                  */
                 void turn_on_WiFi(int connection_type=0, int try_time = 1) {
+                    ESP_ERROR_CHECK(nvs_flash_erase());
+                    ESP_ERROR_CHECK(nvs_flash_init());
+
+                    s_retry_num = 0;
+                    // SetForceWiFiOff = true;
+                    // esp_wifi_stop();
+                    esp_wifi_disconnect();
+                    // SetForceWiFiOff = false;
+
                     if(STATE_initial == false ){
                         STATE_initial = true;
                         ESP_ERROR_CHECK(nvs_flash_init());
@@ -395,18 +502,20 @@
                         return;
                     } else if (connection_type == 1) {
                         if (scanAP_check(ssid_wpa2)) {
-                            while (!connect_wpa2() && try_counter < try_time) {
-                                try_counter++;
-                            }
+                            // while (!connect_wpa2() && try_counter < try_time) {
+                            //     try_counter++;
+                            // }
+                            connect_wpa2();
                             printWiFiConfig();
                             // PingTest();
                             return;
                         }
                     } else if (connection_type == 2) {
                         if (scanAP_check(peap_ssid_wpa2)) {
-                            while (!connect_peap() && try_counter < try_time) {
-                                try_counter++;
-                            }
+                            // while (!connect_peap() && try_counter < try_time) {
+                            //     try_counter++;
+                            // }
+                            connect_peap();
                             printWiFiConfig();
                             // PingTest();
                             return;
@@ -415,6 +524,7 @@
                 }
 
                 void turn_off_WiFi() {
+                    SetForceWiFiOff = true;
                     esp_wifi_stop();
                 }
 
@@ -489,9 +599,12 @@
                 bool PingTest() {
                     IPAddress ips[] = {
                         IPAddress(8, 8, 8, 8),
-                        IPAddress(168, 95, 1, 1)
+                        IPAddress(168, 95, 1, 1),
+                        // IPAddress(192, 168, 50, 1)
                     };
-
+                    if(!wifi_connect_status()){
+                      return false;
+                    }
                     bool success = false;
                     for (const auto& ip : ips) {
                         success = Ping.ping(ip, 3);
@@ -503,7 +616,23 @@
                     }
                     return success;
                 }
+                void setCloseWiFi(bool signal){
+                    auto_close_wifi = signal;
+                }
+                void obtain_time() {
+                    const char* ntpServer = "time.stdtime.gov.tw";
+                    const long gmtOffset_sec = 8 * 3600; // UTC+8
+                    const int daylightOffset_sec = 0;
 
+                    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+                    struct tm timeinfo;
+                    if(!getLocalTime(&timeinfo)){
+                        Serial.println("Failed to obtain time");
+                    }
+                    Serial.println(&timeinfo, "Current time: %Y-%m-%d %H:%M:%S");
+                    return;
+                }
         };
 
     // #endif

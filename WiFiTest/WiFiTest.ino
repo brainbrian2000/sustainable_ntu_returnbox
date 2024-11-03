@@ -526,27 +526,65 @@
 #include <string.h>
 #include "Wifi_connect.cpp"
 #include "esp_wifi.h"
+void obtain_time() {
+    const char* ntpServer = "time.stdtime.gov.tw";
+    const long gmtOffset_sec = 8 * 3600; // UTC+8
+    const int daylightOffset_sec = 0;
 
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+    struct tm timeinfo;
+    if(!getLocalTime(&timeinfo)){
+        Serial.println("Failed to obtain time");
+    }
+    Serial.println(&timeinfo, "Current time: %Y-%m-%d %H:%M:%S");
+    return;
+}
+void set_time(int year, int month, int day, int hour, int min, int sec){
+    struct tm timeinfo;
+    timeinfo.tm_year = year - 1900;
+    timeinfo.tm_mon = month - 1;
+    timeinfo.tm_mday = day;
+    timeinfo.tm_hour = hour;
+    timeinfo.tm_min = min;
+    timeinfo.tm_sec = sec;
+    time_t time = mktime(&timeinfo);
+    struct timeval tv = {time, 0};
+    settimeofday(&tv, NULL);
+    return;
+}
 WiFi_connection wifi;
 void setup(void)
 {
+    // esp_log_level_set("wifi", ESP_LOG_VERBOSE);
     Serial.begin(115200);
     Serial.println("wifi init");
+    wifi.setCloseWiFi(false);
+    set_time(2024,11,4,00,40,40);
     // ESP_ERROR_CHECK(nvs_flash_init());
     // ESP_ERROR_CHECK(esp_netif_init());
     // wifi_event_group = xEventGroupCreate();
     // ESP_ERROR_CHECK(esp_event_loop_create_default());
     // esp_netif_t *sta_netif = esp_netif_create_default_wifi_sta();
     // assert(sta_netif);
-    wifi.changePEAP("RiceballFan_peap", "brainbrian2000", "brainbrian2000");
-    // wifi.changeWPA2(Riceball_Fan, brainbrian2000);    
-    wifi.turn_on_WiFi();
-    wifi.turn_on_WiFi(2);
+    // wifi.changePEAP("RiceballFan_peap", "brainbrian2000", "brainbrian2000");
+    // wifi.changePEAP("ntu_peap", "r13247001", "Brian168");
+    // wifi.changePEAP("ntu_peap", "b08209023", "Brian168");
+    wifi.changePEAP("eduroam", "r13247001@eduroam.ntu.edu.tw", "RiceballFan2000");
+    wifi.changeWPA2("RiceballFan", "brainbrian2000");    
     // wifi_scan();
     // initialise_wifi();
     // WiFi.mode(WIFI_STA);
     // wifi_init_sta();
     // init_ping_test();
+    // wifi.turn_on_WiFi();
+    // wifi.turn_on_WiFi(1);
+    // wifi.turn_off_WiFi();
+    vTaskDelay(5000);
+    wifi.turn_on_WiFi();
+    wifi.turn_on_WiFi(2);
+    obtain_time();
+    wifi.setCloseWiFi(true);
     // xTaskCreate(&wifi_enterprise_example_task, "wifi_enterprise_example_task", 4096, NULL, 5, NULL);
     vTaskDelay(1000 / portTICK_PERIOD_MS);
     wifi.printWiFiConfig();
@@ -554,8 +592,11 @@ void setup(void)
     if(wifi.wifi_connect_status()){
         Serial.println("wifi connected");   
     }
-    // PingTest();
+    wifi.PingTest();
 }
 void loop(){
+    // wifi.turn_on_WiFi();
+    // wifi.turn_on_WiFi(2);
+    // vTaskDelay(5000);
 
 };
